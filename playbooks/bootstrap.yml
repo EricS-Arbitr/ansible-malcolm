@@ -3,7 +3,9 @@
   become: true
   vars:
     automation_user: ansible
-    automation_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+    automation_pubkeys: 
+      - "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBdWfzSBGm4NQGKiIbpMm3Vjv0mUPab/i7ieKQuL5EIM eric@Eric-Gaming-Rig"
   tasks:
     - name: Create automation user
       ansible.builtin.user:
@@ -12,10 +14,11 @@
         groups: sudo
         append: true
 
-    - name: Authorize controller SSH key
+    - name: Authorize SSH keys
       ansible.posix.authorized_key:
         user: "{{ automation_user }}"
-        key: "{{ automation_pubkey }}"
+        key: "{{ automation_pubkeys | join('\n') }}"
+        exclusive: true
 
     - name: Passwordless sudo for automation user
       ansible.builtin.copy:
