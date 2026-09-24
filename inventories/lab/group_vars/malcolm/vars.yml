@@ -1,1 +1,4 @@
 ansible_user: ansible
+
+docker_engine_users:
+  - ansible

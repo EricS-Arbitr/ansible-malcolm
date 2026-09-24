@@ -54,11 +54,12 @@ malcolm-ansible/
 │       └── group_vars/
 │           ├── all.yml          # currently empty
 │           └── malcolm/
-│               └── vars.yml     # ansible_user: ansible
+│               └── vars.yml     # ansible_user, docker_engine_users
 ├── roles/
+│   └── docker_engine/
 └── playbooks/
-    ├── bootstrap.yml
-    └── deploy_malcolm.yml       # placeholder (empty); will apply the roles below
+    ├── bootstrap.yml            # run once per fresh target
+    └── deploy_malcolm.yml       # applies the roles below
 ```
 
 Collections in `requirements.yml`: `community.docker`, `community.general`,
@@ -67,10 +68,10 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
 ## Roles: built and planned
 
 - [x] `bootstrap.yml` playbook — automation user, SSH keys, passwordless sudo
-- [ ] `docker_engine` — Docker CE from Docker's official apt repo (not
+- [x] `docker_engine` — Docker CE from Docker's official apt repo (not
   `docker.io`), Compose v2 plugin, `daemon.json` log rotation, docker group
   membership. Must work on both jammy (target) and noble (if run against the
-  legacy controller) — derive the repo suite from `ansible_distribution_release`,
+  legacy controller) — derive the repo suite from `ansible_facts['distribution_release']`,
   never hardcode it. Make the apt repo URL and GPG key URL role defaults so an
   air-gapped deployment can point them at a local mirror.
 - [ ] `malcolm_host_prep` — data disk partition/format/mount, `vm.max_map_count`
@@ -91,7 +92,7 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
   between versions.
 - **Memory is the binding constraint.** Malcolm wants 16 GB minimum; the target
   has exactly that and also runs a GNOME desktop, so it is tight. Size the
-  OpenSearch and Logstash heaps from `ansible_memtotal_mb` rather than
+  OpenSearch and Logstash heaps from `ansible_facts['memtotal_mb']` rather than
   hardcoding:
 
   | Host RAM | OpenSearch heap | Logstash heap |
@@ -115,6 +116,10 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
 - Fully-qualified collection names for all non-builtin modules
   (`ansible.posix.mount`, not `mount`).
 - Roles must be idempotent: a second run reports `changed=0`.
+- Reference facts as `ansible_facts['distribution']`, not the injected
+  top-level `ansible_distribution` form (deprecated; removed in ansible-core 2.24).
+- Role variables are prefixed with the role name (`docker_engine_*`).
+- Collection versions are pinned in `requirements.yml`; bump deliberately.
 - Tunables go in `roles/<role>/defaults/main.yml`; environment-specific values
   go in `inventories/lab/group_vars/`.
 - Secrets go in an Ansible Vault file under `group_vars/malcolm/vault.yml`.
@@ -153,4 +158,9 @@ bootstrap can reach it. This is the only accepted manual step.
   actually resolve for a host.
 - The target is Ubuntu **Desktop**, not Server: no SSH server by default, GNOME
   consumes ~2 GB RAM, and PackageKit/unattended-upgrades can hold the apt lock
-  mid-run.
+  mid-run. Apt tasks set `lock_timeout` to wait it out.
+- From Claude Code's Bash tool, `ansible`/`ansible-playbook` abort with
+  "requires blocking IO on stdin/stdout/stderr". Run them with
+  `</dev/null >file 2>&1` and read the file.
+- Ad-hoc `-a` strings are templated, so `{{ }}` (e.g. `docker --format`) must
+  be avoided or escaped.

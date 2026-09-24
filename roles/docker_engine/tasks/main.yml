@@ -1,0 +1,82 @@
+- name: Assert supported distribution
+  ansible.builtin.assert:
+    that: ansible_facts['distribution'] == 'Ubuntu'
+    fail_msg: "docker_engine supports Ubuntu only, got {{ ansible_facts['distribution'] }}"
+    quiet: true
+
+- name: Remove conflicting distro packages
+  ansible.builtin.apt:
+    name: "{{ docker_engine_conflicting_packages }}"
+    state: absent
+    lock_timeout: "{{ docker_engine_apt_lock_timeout }}"
+
+- name: Install repo prerequisites
+  ansible.builtin.apt:
+    name: ca-certificates
+    state: present
+    cache_valid_time: 3600
+    lock_timeout: "{{ docker_engine_apt_lock_timeout }}"
+
+- name: Create apt keyrings directory
+  ansible.builtin.file:
+    path: "{{ docker_engine_keyring | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download Docker apt signing key
+  ansible.builtin.get_url:
+    url: "{{ docker_engine_gpg_key_url }}"
+    dest: "{{ docker_engine_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: docker_engine_key
+
+- name: Add Docker apt repository
+  ansible.builtin.template:
+    src: docker.sources.j2
+    dest: /etc/apt/sources.list.d/docker.sources
+    owner: root
+    group: root
+    mode: "0644"
+  register: docker_engine_repo
+
+- name: Refresh apt cache after repo change # noqa: no-handler
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: "{{ docker_engine_apt_lock_timeout }}"
+  when: docker_engine_key is changed or docker_engine_repo is changed
+
+- name: Install Docker Engine and Compose plugin
+  ansible.builtin.apt:
+    name: "{{ docker_engine_packages }}"
+    state: present
+    cache_valid_time: 3600
+    lock_timeout: "{{ docker_engine_apt_lock_timeout }}"
+
+- name: Configure Docker daemon
+  ansible.builtin.copy:
+    content: "{{ docker_engine_daemon_config | to_nice_json }}\n"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart docker
+
+- name: Enable and start Docker
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - containerd
+    - docker
+
+- name: Add users to docker group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_engine_users }}"

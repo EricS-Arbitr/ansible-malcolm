@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+Types: deb
+URIs: {{ docker_engine_repo_url }}
+Suites: {{ docker_engine_repo_suite }}
+Components: {{ docker_engine_repo_components }}
+Architectures: {{ docker_engine_repo_arch }}
+Signed-By: {{ docker_engine_keyring }}

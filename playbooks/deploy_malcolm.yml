@@ -1,0 +1,5 @@
+- name: Deploy Malcolm
+  hosts: malcolm
+  become: true
+  roles:
+    - docker_engine
