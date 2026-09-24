@@ -1,0 +1,156 @@
+# CLAUDE.md
+
+Guidance for Claude Code working in this repository.
+
+## Goal
+
+Automate the installation and configuration of **Malcolm**, the open-source
+network traffic analysis suite (https://github.com/cisagov/Malcolm), with
+Ansible. The end product is a set of roles and playbooks that can stand up a
+working Malcolm instance on a fresh Ubuntu host repeatably and without
+interactive prompts.
+
+These roles are intended to be reusable for cyber range and training
+environments, including air-gapped deployments, so avoid solutions that depend
+on this specific lab (hardcoded IPs, one-off manual steps, interactive scripts).
+
+## Topology
+
+| Role | Machine | Notes |
+|---|---|---|
+| Ansible controller | WSL Ubuntu 24.04 on `Eric-Gaming-Rig` | Repo lives here at `~/malcolm-ansible`. All `ansible-playbook` runs happen here. |
+| Malcolm target | `malcolm01` — Ubuntu 22.04 **Desktop** VM in VMware Workstation | `192.168.153.130`, hostname `malcolm`, 16 GB RAM, 8 vCPU. Second NIC present for capture. |
+| Legacy controller | Ubuntu 24.04 VM (`eric-ubuntu-24-04`) | No longer the primary controller. Kept as a staging / air-gap testbed. Shares the WSL controller's SSH keypair (copied over), so it is authorized on the target by the same key. |
+
+The controller is **not** in the inventory. Only managed hosts are listed.
+
+## Access model
+
+- Ansible connects to targets as the **`ansible`** service account.
+- That account has **no password** (locked in `/etc/shadow`). SSH key only.
+- Passwordless sudo via `/etc/sudoers.d/90-ansible`.
+- `playbooks/bootstrap.yml` is the source of truth for authorized keys and uses
+  `exclusive: true`. **Any key not listed in `automation_pubkeys` is removed on
+  the next run.** If you add a key by hand, add it to the playbook too or it
+  will be wiped.
+- The WSL controller's own key is pulled in with
+  `lookup('file', '~/.ssh/id_ed25519.pub')`. Keys belonging to other machines
+  must be pasted as literal strings, since the lookup runs on the controller.
+- Both controllers (WSL and the legacy VM) use the **same** ed25519 keypair.
+  The literal key in `automation_pubkeys` is identical to the looked-up one; it
+  is kept so the playbook still authorizes that key if run from a controller
+  with a different `~/.ssh/id_ed25519.pub`. If the legacy controller ever gets
+  its own keypair, add its public key as a new literal entry.
+
+## Repo layout
+
+```
+malcolm-ansible/
+├── ansible.cfg
+├── requirements.yml
+├── inventories/
+│   └── lab/
+│       ├── hosts.yml
+│       └── group_vars/
+│           ├── all.yml          # currently empty
+│           └── malcolm/
+│               └── vars.yml     # ansible_user: ansible
+├── roles/
+└── playbooks/
+    ├── bootstrap.yml
+    └── deploy_malcolm.yml       # placeholder (empty); will apply the roles below
+```
+
+Collections in `requirements.yml`: `community.docker`, `community.general`,
+`ansible.posix`.
+
+## Roles: built and planned
+
+- [x] `bootstrap.yml` playbook — automation user, SSH keys, passwordless sudo
+- [ ] `docker_engine` — Docker CE from Docker's official apt repo (not
+  `docker.io`), Compose v2 plugin, `daemon.json` log rotation, docker group
+  membership. Must work on both jammy (target) and noble (if run against the
+  legacy controller) — derive the repo suite from `ansible_distribution_release`,
+  never hardcode it. Make the apt repo URL and GPG key URL role defaults so an
+  air-gapped deployment can point them at a local mirror.
+- [ ] `malcolm_host_prep` — data disk partition/format/mount, `vm.max_map_count`
+  and other sysctls, file and memlock ulimits, disable GNOME suspend/idle,
+  quiet unattended-upgrades, bring up the capture interface.
+- [ ] `malcolm` — pin a release version, stage it, template `config/*.env`,
+  bring the stack up with `docker compose`. Also needs a non-interactive
+  replacement for Malcolm's `auth_setup` step (admin htpasswd, TLS certs,
+  OpenSearch credential files), with credentials sourced from Vault. Make the
+  container image registry a variable for air-gapped use.
+
+## Malcolm-specific constraints
+
+- **Do not drive Malcolm's `install.py` / `configure` scripts interactively.**
+  They prompt. For idempotent automation, template Malcolm's `config/*.env`
+  files with Jinja2 and drive `docker compose` directly.
+- **Pin the Malcolm release** in `group_vars`. Configuration options change
+  between versions.
+- **Memory is the binding constraint.** Malcolm wants 16 GB minimum; the target
+  has exactly that and also runs a GNOME desktop, so it is tight. Size the
+  OpenSearch and Logstash heaps from `ansible_memtotal_mb` rather than
+  hardcoding:
+
+  | Host RAM | OpenSearch heap | Logstash heap |
+  |---|---|---|
+  | 16 GB | 6–8 GB | 2–3 GB |
+  | 24 GB | 10 GB | 3 GB |
+  | 32 GB | 12–14 GB | 4 GB |
+  | 64 GB | 24–31 GB | 4–6 GB |
+
+  Heap does not benefit above ~31 GB. On a 16 GB **Desktop** host (like
+  `malcolm01`), use the low end of the row (~6 GB / ~2 GB): GNOME takes ~2 GB
+  and Arkime, Zeek, Suricata, dashboards and page cache need the rest.
+- **Data on a separate disk.** Malcolm's PCAP and OpenSearch data should live on
+  a secondary VMDK mounted by `malcolm_host_prep`, not on the OS disk. Verify
+  the disk exists (`lsblk`) before assuming it is present.
+- **Live capture** needs promiscuous mode enabled both in the guest and in
+  VMware. The VMware side is outside Ansible's reach.
+
+## Conventions
+
+- Fully-qualified collection names for all non-builtin modules
+  (`ansible.posix.mount`, not `mount`).
+- Roles must be idempotent: a second run reports `changed=0`.
+- Tunables go in `roles/<role>/defaults/main.yml`; environment-specific values
+  go in `inventories/lab/group_vars/`.
+- Secrets go in an Ansible Vault file under `group_vars/malcolm/vault.yml`.
+  None exist yet — create it with `ansible-vault create` when Malcolm's admin
+  credentials are needed. Do not commit a vault password file.
+- Run `ansible-lint` before committing.
+- Commit after each working role.
+
+## Testing
+
+`malcolm01` has a VMware snapshot taken after `bootstrap.yml` ran. Roll back to
+it to test roles against a clean system. The `ansible` account, its keys and
+its sudo rule are part of the snapshot, so roles can be run immediately after a
+rollback without re-bootstrapping.
+
+On a fresh target (or a snapshot older than bootstrap), run bootstrap as the
+initial admin user:
+
+```
+ansible-playbook playbooks/bootstrap.yml -e ansible_user=eric -k -K
+```
+
+Use `-e ansible_user=eric`, not `-u eric`: `group_vars/malcolm/vars.yml` sets
+`ansible_user: ansible`, and inventory vars take precedence over `-u`, so `-u`
+would silently try to connect as the not-yet-existing `ansible` user.
+
+**Manual prerequisite:** Ubuntu Desktop ships without an SSH server, so
+`sudo apt install openssh-server` must be done on a fresh target before
+bootstrap can reach it. This is the only accepted manual step.
+
+## Gotchas hit so far
+
+- Empty `group_vars` files fail silently. If a variable seems ignored, `cat` the
+  file before assuming a path or precedence problem.
+- `ansible-inventory --host <name>` is the fastest way to see what variables
+  actually resolve for a host.
+- The target is Ubuntu **Desktop**, not Server: no SSH server by default, GNOME
+  consumes ~2 GB RAM, and PackageKit/unattended-upgrades can hold the apt lock
+  mid-run.
