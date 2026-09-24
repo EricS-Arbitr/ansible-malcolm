@@ -1,0 +1,11 @@
+galaxy_info:
+  author: estarace
+  description: Host preparation for Malcolm (data disk, kernel tuning, limits, desktop power, capture NIC)
+  license: proprietary
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+dependencies: []

@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+[connection]
+id={{ malcolm_host_prep_capture_connection }}
+type=ethernet
+interface-name={{ malcolm_host_prep_capture_interface }}
+autoconnect=true
+autoconnect-priority=100
+
+[ethernet]
+# Promiscuous mode (NetworkManager >= 1.32)
+accept-all-mac-addresses=1
+
+[ethtool]
+{% for f in malcolm_host_prep_capture_offloads_off %}
+feature-{{ f }}=false
+{% endfor %}
+
+[ipv4]
+method=disabled
+
+[ipv6]
+method=disabled

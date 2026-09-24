@@ -1,0 +1,4 @@
+# nvme0n1 -> nvme0n1p1, sdb -> sdb1
+malcolm_host_prep_data_partition: >-
+  {{ malcolm_host_prep_data_device
+     ~ ('p1' if malcolm_host_prep_data_device[-1] is match('[0-9]') else '1') }}

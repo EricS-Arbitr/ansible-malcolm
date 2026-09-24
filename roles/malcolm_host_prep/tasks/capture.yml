@@ -1,0 +1,35 @@
+- name: Assert capture interface is present and not carrying management traffic
+  ansible.builtin.assert:
+    that:
+      - malcolm_host_prep_capture_interface in ansible_facts['interfaces']
+      - malcolm_host_prep_capture_interface != ansible_facts['default_ipv4']['interface'] | default('')
+      - >-
+        ansible_facts[malcolm_host_prep_capture_interface | replace('-', '_')]['ipv4']['address'] | default('')
+        != ansible_host | default(inventory_hostname)
+    fail_msg: >-
+      {{ malcolm_host_prep_capture_interface }} is missing, holds the default route,
+      or is the address Ansible connects to. Refusing to strip its IP.
+    quiet: true
+
+- name: Stop NetworkManager auto-creating a DHCP profile on the capture NIC
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/conf.d/60-malcolm-capture.conf
+    content: |
+      # Managed by Ansible (malcolm_host_prep)
+      [main]
+      no-auto-default={{ malcolm_host_prep_capture_interface }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload NetworkManager config
+
+- name: Create capture connection profile
+  ansible.builtin.template:
+    src: capture.nmconnection.j2
+    dest: /etc/NetworkManager/system-connections/{{ malcolm_host_prep_capture_connection }}.nmconnection
+    owner: root
+    group: root
+    mode: "0600"
+  notify:
+    - Reload NetworkManager connections
+    - Activate capture connection

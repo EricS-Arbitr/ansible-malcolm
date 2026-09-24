@@ -1,0 +1,35 @@
+- name: Detect GNOME
+  ansible.builtin.stat:
+    path: /usr/bin/gnome-shell
+  register: malcolm_host_prep_gnome
+
+- name: Apply GNOME system settings
+  when: malcolm_host_prep_gnome.stat.exists
+  block:
+    - name: Enable dconf local system database
+      ansible.builtin.copy:
+        dest: /etc/dconf/profile/user
+        content: |
+          user-db:user
+          system-db:local
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Update dconf
+
+    - name: Create dconf local keyfile directory
+      ansible.builtin.file:
+        path: /etc/dconf/db/local.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Disable idle suspend, screen blank and auto-downloads
+      ansible.builtin.template:
+        src: dconf-malcolm.j2
+        dest: /etc/dconf/db/local.d/00-malcolm
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Update dconf

@@ -1,0 +1,4 @@
+# {{ ansible_managed }}
+{% for l in malcolm_host_prep_limits %}
+{{ l.domain }} {{ l.type }} {{ l.item }} {{ l.value }}
+{% endfor %}

@@ -1,0 +1,20 @@
+- name: Update dconf
+  ansible.builtin.command:
+    cmd: dconf update
+  changed_when: true
+
+# Handlers run in the order listed here: config, then profiles, then activate.
+- name: Reload NetworkManager config
+  ansible.builtin.command:
+    cmd: nmcli general reload conf
+  changed_when: true
+
+- name: Reload NetworkManager connections
+  ansible.builtin.command:
+    cmd: nmcli connection reload
+  changed_when: true
+
+- name: Activate capture connection
+  ansible.builtin.command:
+    cmd: nmcli connection up {{ malcolm_host_prep_capture_connection }}
+  changed_when: true

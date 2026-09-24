@@ -1,0 +1,50 @@
+- name: Prepare data disk
+  ansible.builtin.include_tasks: data_disk.yml
+  when: malcolm_host_prep_data_device | length > 0
+
+- name: Apply kernel tuning
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: "{{ malcolm_host_prep_sysctl_file }}"
+    reload: true
+  loop: "{{ malcolm_host_prep_sysctls | dict2items }}"
+
+- name: Set PAM limits
+  ansible.builtin.template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.d/60-malcolm.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Mask sleep targets
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: true
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  when: malcolm_host_prep_disable_sleep | bool
+
+- name: Configure GNOME desktop
+  ansible.builtin.include_tasks: gnome.yml
+  when: malcolm_host_prep_disable_gnome_idle | bool
+
+- name: Disable APT periodic updates and unattended-upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      // Managed by Ansible (malcolm_host_prep)
+      APT::Periodic::Update-Package-Lists "0";
+      APT::Periodic::Unattended-Upgrade "0";
+    owner: root
+    group: root
+    mode: "0644"
+  when: malcolm_host_prep_disable_auto_upgrades | bool
+
+- name: Configure capture interface
+  ansible.builtin.include_tasks: capture.yml
+  when: malcolm_host_prep_capture_interface | length > 0

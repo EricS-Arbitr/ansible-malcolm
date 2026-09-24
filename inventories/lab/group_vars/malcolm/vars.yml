@@ -2,3 +2,10 @@ ansible_user: ansible
 
 docker_engine_users:
   - ansible
+
+# 250 GB secondary VMDK. Formatted ext4 and mounted at /data.
+malcolm_host_prep_data_device: /dev/sdb
+
+# Dedicated capture vNIC (third adapter). ens33 (NAT/default route) and ens34
+# (management) must NOT be used.
+malcolm_host_prep_capture_interface: ens38

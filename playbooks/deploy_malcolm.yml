@@ -2,4 +2,5 @@
   hosts: malcolm
   become: true
   roles:
+    - malcolm_host_prep
     - docker_engine

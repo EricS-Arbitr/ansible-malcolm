@@ -1,0 +1,54 @@
+- name: Check data device exists
+  ansible.builtin.stat:
+    path: "{{ malcolm_host_prep_data_device }}"
+  register: malcolm_host_prep_data_dev_stat
+
+- name: Assert data device is a block device and not the OS disk
+  ansible.builtin.assert:
+    that:
+      - malcolm_host_prep_data_dev_stat.stat.exists
+      - malcolm_host_prep_data_dev_stat.stat.isblk
+      - >-
+        ansible_facts['mounts'] | selectattr('mount', 'equalto', '/')
+        | map(attribute='device') | select('match', '^' ~ malcolm_host_prep_data_device ~ '(p?[0-9]+)?$')
+        | list | length == 0
+    fail_msg: >-
+      {{ malcolm_host_prep_data_device }} is missing, not a block device, or holds
+      the root filesystem. Check lsblk on the target.
+    quiet: true
+
+- name: Install partitioning tools
+  ansible.builtin.apt:
+    name: parted
+    state: present
+    lock_timeout: "{{ malcolm_host_prep_apt_lock_timeout }}"
+
+- name: Create single GPT partition spanning the disk
+  community.general.parted:
+    device: "{{ malcolm_host_prep_data_device }}"
+    number: 1
+    label: gpt
+    name: "{{ malcolm_host_prep_data_label }}"
+    part_end: "100%"
+    state: present
+
+- name: Create filesystem if none exists
+  community.general.filesystem:
+    dev: "{{ malcolm_host_prep_data_partition }}"
+    fstype: "{{ malcolm_host_prep_data_fstype }}"
+    opts: "-L {{ malcolm_host_prep_data_label }}"
+
+- name: Read filesystem UUID
+  ansible.builtin.command:
+    cmd: blkid -s UUID -o value {{ malcolm_host_prep_data_partition }}
+  register: malcolm_host_prep_data_uuid
+  changed_when: false
+
+- name: Mount data filesystem
+  ansible.posix.mount:
+    path: "{{ malcolm_host_prep_data_mount }}"
+    src: "UUID={{ malcolm_host_prep_data_uuid.stdout }}"
+    fstype: "{{ malcolm_host_prep_data_fstype }}"
+    opts: "{{ malcolm_host_prep_data_mount_opts }}"
+    passno: "2"
+    state: mounted

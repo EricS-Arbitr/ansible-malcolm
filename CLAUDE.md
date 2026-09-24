@@ -19,7 +19,7 @@ on this specific lab (hardcoded IPs, one-off manual steps, interactive scripts).
 | Role | Machine | Notes |
 |---|---|---|
 | Ansible controller | WSL Ubuntu 24.04 on `Eric-Gaming-Rig` | Repo lives here at `~/malcolm-ansible`. All `ansible-playbook` runs happen here. |
-| Malcolm target | `malcolm01` — Ubuntu 22.04 **Desktop** VM in VMware Workstation | `192.168.153.130`, hostname `malcolm`, 16 GB RAM, 8 vCPU. Second NIC present for capture. |
+| Malcolm target | `malcolm01` — Ubuntu 22.04 **Desktop** VM in VMware Workstation | `192.168.153.130`, hostname `malcolm`, 16 GB RAM, 8 vCPU. NICs: `ens33` = VMware NAT, DHCP, default route (internet); `ens34` = management (`192.168.153.130`, what Ansible uses); `ens38` = capture (no IP). Data disk `sdb` (250 GB) → `/data`. |
 | Legacy controller | Ubuntu 24.04 VM (`eric-ubuntu-24-04`) | No longer the primary controller. Kept as a staging / air-gap testbed. Shares the WSL controller's SSH keypair (copied over), so it is authorized on the target by the same key. |
 
 The controller is **not** in the inventory. Only managed hosts are listed.
@@ -54,8 +54,9 @@ malcolm-ansible/
 │       └── group_vars/
 │           ├── all.yml          # currently empty
 │           └── malcolm/
-│               └── vars.yml     # ansible_user, docker_engine_users
+│               └── vars.yml     # ansible_user, data device, capture NIC, docker users
 ├── roles/
+│   ├── malcolm_host_prep/
 │   └── docker_engine/
 └── playbooks/
     ├── bootstrap.yml            # run once per fresh target
@@ -74,9 +75,13 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
   legacy controller) — derive the repo suite from `ansible_facts['distribution_release']`,
   never hardcode it. Make the apt repo URL and GPG key URL role defaults so an
   air-gapped deployment can point them at a local mirror.
-- [ ] `malcolm_host_prep` — data disk partition/format/mount, `vm.max_map_count`
-  and other sysctls, file and memlock ulimits, disable GNOME suspend/idle,
-  quiet unattended-upgrades, bring up the capture interface.
+- [x] `malcolm_host_prep` — data disk partition/format/mount (never reformats
+  an existing filesystem), `vm.max_map_count` and other sysctls, file and
+  memlock ulimits, mask sleep targets, GNOME idle/suspend off via system dconf,
+  APT periodic updates off, capture NIC via a NetworkManager keyfile (no IP,
+  promiscuous, offloads off). Capture setup refuses to touch the default-route
+  or management interface. Assumes NetworkManager (Desktop); Server/networkd
+  hosts would need a netplan variant.
 - [ ] `malcolm` — pin a release version, stage it, template `config/*.env`,
   bring the stack up with `docker compose`. Also needs a non-interactive
   replacement for Malcolm's `auth_setup` step (admin htpasswd, TLS certs,
@@ -164,3 +169,11 @@ bootstrap can reach it. This is the only accepted manual step.
   `</dev/null >file 2>&1` and read the file.
 - Ad-hoc `-a` strings are templated, so `{{ }}` (e.g. `docker --format`) must
   be avoided or escaped.
+- `ansible_managed` is only defined inside templates; using it in `copy`
+  `content:` fails.
+- `nmcli general reload` rereads NM config only. New/changed connection
+  keyfiles need `nmcli connection reload`.
+- Handlers from a failed run are dropped unless `force_handlers = True`
+  (now set in `ansible.cfg`); otherwise a config file can be written but never
+  applied, and later runs won't re-notify.
+- Hot-adding a vNIC in VMware can briefly drop SSH to the guest.
