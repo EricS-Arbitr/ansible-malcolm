@@ -1,0 +1,25 @@
+- name: Bootstrap automation access
+  hosts: malcolm
+  become: true
+  vars:
+    automation_user: ansible
+    automation_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+  tasks:
+    - name: Create automation user
+      ansible.builtin.user:
+        name: "{{ automation_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+
+    - name: Authorize controller SSH key
+      ansible.posix.authorized_key:
+        user: "{{ automation_user }}"
+        key: "{{ automation_pubkey }}"
+
+    - name: Passwordless sudo for automation user
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/90-{{ automation_user }}"
+        content: "{{ automation_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
