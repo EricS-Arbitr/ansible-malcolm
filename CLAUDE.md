@@ -19,10 +19,27 @@ on this specific lab (hardcoded IPs, one-off manual steps, interactive scripts).
 | Role | Machine | Notes |
 |---|---|---|
 | Ansible controller | WSL Ubuntu 24.04 on `Eric-Gaming-Rig` | Repo lives here at `~/malcolm-ansible`. All `ansible-playbook` runs happen here. |
-| Malcolm target | `malcolm01` — Ubuntu 22.04 **Desktop** VM in VMware Workstation | `192.168.153.130`, hostname `malcolm`, 16 GB RAM, 8 vCPU. NICs: `ens33` = VMware NAT, DHCP, default route (internet); `ens34` = management (`192.168.153.130`, what Ansible uses); `ens38` = capture (no IP). Data disk `sdb` (250 GB) → `/data`. |
+| Malcolm target | `malcolm01` — Ubuntu 22.04 **Desktop** VM in VMware Workstation | `192.168.153.130`, hostname `malcolm`, 16 GB RAM, 8 vCPU. NICs: `ens33` = VMware NAT, DHCP, default route (internet); `ens34` = management (`192.168.153.130`, what Ansible uses); `ens38` = capture (no IP, bridged, see below). Data disk `sdb` (250 GB) → `/data`. VM files: `C:\Users\erics\malcolm_test\` (`/mnt/c/Users/erics/malcolm_test/` from WSL). |
 | Legacy controller | Ubuntu 24.04 VM (`eric-ubuntu-24-04`) | No longer the primary controller. Kept as a staging / air-gap testbed. Shares the WSL controller's SSH keypair (copied over), so it is authorized on the target by the same key. |
 
 The controller is **not** in the inventory. Only managed hosts are listed.
+
+### Capture network (lab)
+
+- `ens38` is VMware Network Adapter 3 (`ethernet2` in the `.vmx`), **Bridged**
+  (VMnet0) to the workstation's **wired** Ethernet adapter (Wi-Fi is off),
+  with "Replicate physical network connection state" enabled. LAN is
+  `192.168.40.0/24`; the workstation is `192.168.40.109`.
+- Verified 2026-09-24: carrier up, PROMISC, 0 kernel drops; captured unicast
+  frames between other MACs, i.e. promiscuous mode works in guest and VMware.
+- It sees the **workstation's own traffic** (including WSL, which NATs out
+  through it) plus LAN broadcast/multicast. Other LAN hosts' unicast needs a
+  switch SPAN port or tap. Treat captures as containing personal traffic.
+- For range use, the intended layout is a dedicated **Custom** VMnet (host
+  adapter and DHCP off) shared with the lab VMs; no Ansible change needed, the
+  interface stays `ens38`.
+- Quick check from the controller:
+  `ansible malcolm -b -m shell -a 'cat /sys/class/net/ens38/carrier /sys/class/net/ens38/statistics/rx_packets' </dev/null >out 2>&1`
 
 ## Access model
 
@@ -140,6 +157,10 @@ it to test roles against a clean system. The `ansible` account, its keys and
 its sudo rule are part of the snapshot, so roles can be run immediately after a
 rollback without re-bootstrapping.
 
+VMware snapshots include virtual hardware. The existing snapshot predates the
+capture NIC and the host prep, so rolling back may remove Network Adapter 3.
+Take a fresh snapshot before testing the `malcolm` role.
+
 On a fresh target (or a snapshot older than bootstrap), run bootstrap as the
 initial admin user:
 
@@ -177,3 +198,14 @@ bootstrap can reach it. This is the only accepted manual step.
   (now set in `ansible.cfg`); otherwise a config file can be written but never
   applied, and later runs won't re-notify.
 - Hot-adding a vNIC in VMware can briefly drop SSH to the guest.
+- VMware bridging troubleshooting: a bridged vNIC with carrier but
+  `rx_packets=0`, or NO-CARRIER with link state propagation on, means VMnet0
+  is bridged to an adapter that is down (e.g. Wi-Fi off, or "Automatic").
+  In the Virtual Network Editor click **Change Settings** first (otherwise it
+  is read-only and changes are silently discarded), set VMnet0 to the wired
+  adapter by name, then untick/re-tick **Connected** on the VM's adapter.
+  `vmware.log` in the VM directory shows `MACVNetLinkStateEventHandler ... up:1`
+  when the bridge link is really up. Don't use **Restore Defaults**: it can
+  renumber VMnet1/VMnet8 and break management and NAT.
+- Windows interop (`powershell.exe`) is disabled in this WSL instance; Windows
+  host state can only be inspected via files under `/mnt/c`.
