@@ -1,0 +1,121 @@
+- name: Install control script prerequisites
+  ansible.builtin.apt:
+    name:
+      - python3-dotenv
+      - python3-requests
+      - python3-ruamel.yaml
+      - openssl
+      - apache2-utils
+      - unzip
+    state: present
+    cache_valid_time: 3600
+    lock_timeout: "{{ malcolm_apt_lock_timeout }}"
+
+- name: Create Malcolm group
+  ansible.builtin.group:
+    name: "{{ malcolm_group }}"
+    system: true
+
+- name: Create Malcolm service user
+  ansible.builtin.user:
+    name: "{{ malcolm_user }}"
+    group: "{{ malcolm_group }}"
+    groups: docker
+    append: true
+    system: true
+    home: "{{ malcolm_home }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+  register: malcolm_user_info
+
+- name: Record Malcolm UID/GID
+  ansible.builtin.set_fact:
+    malcolm_uid: "{{ malcolm_user_info.uid }}"
+    malcolm_gid: "{{ malcolm_user_info.group }}"
+
+- name: Create release download directory
+  ansible.builtin.file:
+    path: "{{ malcolm_download_dir }}/{{ malcolm_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download Malcolm release bundle
+  ansible.builtin.get_url:
+    url: "{{ malcolm_release_url }}"
+    dest: "{{ malcolm_download_dir }}/{{ malcolm_version }}/docker_install.zip"
+    checksum: "{{ malcolm_release_checksum }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack release bundle
+  ansible.builtin.unarchive:
+    src: "{{ malcolm_download_dir }}/{{ malcolm_version }}/docker_install.zip"
+    dest: "{{ malcolm_download_dir }}/{{ malcolm_version }}"
+    remote_src: true
+    creates: "{{ malcolm_download_dir }}/{{ malcolm_version }}/install.py"
+
+- name: Check for an existing installation
+  ansible.builtin.slurp:
+    src: "{{ malcolm_install_dir }}/.malcolm-version"
+  register: malcolm_installed_version
+  failed_when: false
+
+- name: Refuse to overwrite a different Malcolm version
+  ansible.builtin.assert:
+    that: >-
+      malcolm_installed_version.content is not defined
+      or (malcolm_installed_version.content | b64decode | trim) == malcolm_version
+    fail_msg: >-
+      {{ malcolm_install_dir }} holds Malcolm
+      {{ malcolm_installed_version.content | default('') | b64decode | trim }}, not {{ malcolm_version }}.
+      Upgrades are not automated by this role yet.
+    quiet: true
+
+- name: Find runtime tarball in bundle
+  ansible.builtin.find:
+    paths: "{{ malcolm_download_dir }}/{{ malcolm_version }}"
+    patterns: "malcolm_*.tar.gz"
+  register: malcolm_tarball
+
+- name: Assert exactly one runtime tarball
+  ansible.builtin.assert:
+    that: malcolm_tarball.matched == 1
+    fail_msg: "Expected one malcolm_*.tar.gz in the release bundle, found {{ malcolm_tarball.matched }}"
+    quiet: true
+
+- name: Create install directory
+  ansible.builtin.file:
+    path: "{{ malcolm_install_dir }}"
+    state: directory
+    owner: "{{ malcolm_user }}"
+    group: "{{ malcolm_group }}"
+    mode: "0750"
+
+- name: Extract Malcolm runtime tree
+  ansible.builtin.unarchive:
+    src: "{{ malcolm_tarball.files[0].path }}"
+    dest: "{{ malcolm_install_dir }}"
+    remote_src: true
+    owner: "{{ malcolm_user }}"
+    group: "{{ malcolm_group }}"
+    extra_opts:
+      - --strip-components=2
+    creates: "{{ malcolm_install_dir }}/docker-compose.yml"
+
+- name: Record installed version
+  ansible.builtin.copy:
+    dest: "{{ malcolm_install_dir }}/.malcolm-version"
+    content: "{{ malcolm_version }}\n"
+    owner: "{{ malcolm_user }}"
+    group: "{{ malcolm_group }}"
+    mode: "0644"
+
+- name: Point images at the configured registry
+  ansible.builtin.replace:
+    path: "{{ malcolm_install_dir }}/docker-compose.yml"
+    regexp: 'image: {{ malcolm_image_registry_default | regex_escape }}/'
+    replace: "image: {{ malcolm_image_registry }}/"
+  when: malcolm_image_registry != malcolm_image_registry_default

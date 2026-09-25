@@ -1,0 +1,14 @@
+- name: Stage Malcolm release
+  ansible.builtin.include_tasks: install.yml
+
+- name: Configure Malcolm
+  ansible.builtin.include_tasks: config.yml
+
+- name: Pull Malcolm images
+  ansible.builtin.include_tasks: images.yml
+
+- name: Set up Malcolm authentication
+  ansible.builtin.include_tasks: auth.yml
+
+- name: Start Malcolm
+  ansible.builtin.include_tasks: run.yml

@@ -9,3 +9,11 @@ malcolm_host_prep_data_device: /dev/sdb
 # Dedicated capture vNIC (third adapter). ens33 (NAT/default route) and ens34
 # (management) must NOT be used.
 malcolm_host_prep_capture_interface: ens38
+
+# Malcolm lives on the data disk; all its data paths are relative to this.
+malcolm_install_dir: /data/malcolm
+malcolm_capture_interface: "{{ malcolm_host_prep_capture_interface }}"
+malcolm_admin_username: analyst
+# Secrets come from vault.yml (ansible-vault encrypted).
+malcolm_admin_password: "{{ vault_malcolm_admin_password }}"
+malcolm_arkime_secret: "{{ vault_malcolm_arkime_secret }}"

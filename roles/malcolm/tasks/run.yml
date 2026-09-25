@@ -1,0 +1,42 @@
+- name: Check for running Malcolm containers
+  ansible.builtin.command:
+    cmd: "{{ malcolm_compose }} ps --quiet --status running"
+    chdir: "{{ malcolm_install_dir }}"
+  register: malcolm_running
+  changed_when: false
+
+# scripts/start does more than "compose up": it creates the OpenSearch
+# keystore, bind-mount directories and placeholder files, and fixes
+# permissions. --quiet returns once compose has started the containers.
+- name: Start Malcolm
+  ansible.builtin.command:
+    cmd: python3 {{ malcolm_install_dir }}/scripts/control.py --start --quiet
+    chdir: "{{ malcolm_install_dir }}"
+  become: true
+  become_user: "{{ malcolm_user }}"
+  when: malcolm_running.stdout_lines | length == 0
+  changed_when: true
+  register: malcolm_started
+
+- name: Skip restart handler after a fresh start
+  ansible.builtin.set_fact:
+    malcolm_started_this_run: "{{ malcolm_started is changed }}"
+
+- name: Apply pending config changes before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Malcolm API
+  ansible.builtin.uri:
+    url: https://localhost/mapi/ping
+    url_username: "{{ malcolm_admin_username }}"
+    url_password: "{{ malcolm_admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    return_content: true
+  register: malcolm_ping
+  until: malcolm_ping.status == 200 and 'pong' in (malcolm_ping.content | default(''))
+  retries: "{{ (malcolm_ready_timeout | int / 15) | int }}"
+  delay: 15
+  # Plain HTTP check; no sudo, so a loaded host doesn't hit become timeouts.
+  become: false
+  no_log: "{{ malcolm_no_log }}"

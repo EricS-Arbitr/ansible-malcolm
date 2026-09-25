@@ -1,0 +1,25 @@
+- name: Find config templates
+  ansible.builtin.find:
+    paths: "{{ malcolm_install_dir }}/config"
+    patterns: "*.env.example"
+  register: malcolm_env_examples
+
+- name: Create config/*.env from examples where missing
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ item.path | regex_replace('\\.example$', '') }}"
+    remote_src: true
+    force: false
+    owner: "{{ malcolm_user }}"
+    group: "{{ malcolm_group }}"
+    mode: "0600"
+  loop: "{{ malcolm_env_examples.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Apply Malcolm settings
+  ansible.builtin.include_tasks: env_file.yml
+  loop: "{{ malcolm_env | dict2items }}"
+  loop_control:
+    loop_var: malcolm_env_file
+    label: "{{ malcolm_env_file.key }}"

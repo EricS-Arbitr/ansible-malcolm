@@ -4,3 +4,4 @@
   roles:
     - malcolm_host_prep
     - docker_engine
+    - malcolm

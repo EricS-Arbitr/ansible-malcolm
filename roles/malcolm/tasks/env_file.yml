@@ -1,0 +1,12 @@
+- name: Set keys in {{ malcolm_env_file.key }}
+  ansible.builtin.lineinfile:
+    path: "{{ malcolm_install_dir }}/config/{{ malcolm_env_file.key }}"
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}={{ item.value | string | trim }}"
+    owner: "{{ malcolm_user }}"
+    group: "{{ malcolm_group }}"
+    mode: "0600"
+  loop: "{{ malcolm_env_file.value | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  notify: Restart Malcolm

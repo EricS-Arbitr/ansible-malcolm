@@ -1,0 +1,44 @@
+malcolm_live_capture: "{{ malcolm_capture_interface | length > 0 }}"
+
+# Java options match Malcolm's defaults except for heap size.
+malcolm_java_opts_suffix: -XX:-HeapDumpOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom -Dlog4j.formatMsgNoLookups=true
+
+# Settings the role owns, per config/*.env file. Live-capture combination
+# mirrors Malcolm's installer (installer/utils/custom_transforms.py).
+malcolm_env_role:
+  process.env:
+    PUID: "{{ malcolm_uid }}"
+    PGID: "{{ malcolm_gid }}"
+  opensearch.env:
+    OPENSEARCH_JAVA_OPTS: >-
+      -server -Xmx{{ malcolm_opensearch_heap | trim }} -Xms{{ malcolm_opensearch_heap | trim }} -Xss256k {{ malcolm_java_opts_suffix }}
+  logstash.env:
+    LS_JAVA_OPTS: >-
+      -server -Xmx{{ malcolm_logstash_heap | trim }} -Xms{{ malcolm_logstash_heap | trim }} -Xss2048k {{ malcolm_java_opts_suffix }}
+  auth-common.env:
+    NGINX_AUTH_MODE: basic
+  upload-common.env:
+    PCAP_NODE_NAME: "{{ malcolm_node_name }}"
+  pcap-capture.env:
+    PCAP_IFACE: "{{ malcolm_capture_interface if malcolm_live_capture | bool else 'lo' }}"
+    PCAP_ENABLE_NETSNIFF: "{{ malcolm_live_capture | bool | string | lower }}"
+    PCAP_ENABLE_TCPDUMP: "false"
+  arkime-live.env:
+    ARKIME_LIVE_CAPTURE: "false"
+  arkime-offline.env:
+    ARKIME_ROTATED_PCAP: "true"
+  zeek-live.env:
+    ZEEK_LIVE_CAPTURE: "{{ malcolm_live_capture | bool | string | lower }}"
+    ZEEK_LB_PROCS_WORKER_DEFAULT: "{{ malcolm_zeek_live_workers }}"
+  pipeline.env:
+    PIPELINE_DISABLED: "{{ (not (malcolm_pipeline_enabled | bool)) | string | lower }}"
+  zeek-offline.env:
+    ZEEK_ROTATED_PCAP: "{{ (not (malcolm_live_capture | bool)) | string | lower }}"
+  suricata-live.env:
+    SURICATA_LIVE_CAPTURE: "{{ malcolm_live_capture | bool | string | lower }}"
+  suricata-offline.env:
+    SURICATA_ROTATED_PCAP: "{{ (not (malcolm_live_capture | bool)) | string | lower }}"
+
+malcolm_env: "{{ malcolm_env_role | combine(malcolm_env_extra, recursive=true) }}"
+
+malcolm_compose: docker compose --profile malcolm -f {{ malcolm_install_dir }}/docker-compose.yml

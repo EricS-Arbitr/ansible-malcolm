@@ -1,0 +1,23 @@
+- name: List images referenced by the compose file
+  ansible.builtin.command:
+    cmd: "{{ malcolm_compose }} config --images"
+    chdir: "{{ malcolm_install_dir }}"
+  register: malcolm_images
+  changed_when: false
+
+- name: Check which images are already present
+  ansible.builtin.command:
+    cmd: docker image inspect --format ok {{ item }}
+  loop: "{{ malcolm_images.stdout_lines | unique }}"
+  register: malcolm_image_check
+  changed_when: false
+  failed_when: false
+
+- name: Pull missing images
+  ansible.builtin.command:
+    cmd: "{{ malcolm_compose }} pull --quiet"
+    chdir: "{{ malcolm_install_dir }}"
+  when: malcolm_image_check.results | selectattr('rc', 'ne', 0) | list | length > 0
+  changed_when: true
+  async: 5400
+  poll: 30

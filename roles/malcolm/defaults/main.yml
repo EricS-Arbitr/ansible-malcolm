@@ -1,0 +1,74 @@
+# --- Release -----------------------------------------------------------------
+# Pinned Malcolm release. Configuration options change between versions, so
+# bump this deliberately together with the checksum.
+malcolm_version: "26.08.0"
+malcolm_release_url: >-
+  https://github.com/cisagov/Malcolm/releases/download/v{{ malcolm_version }}/malcolm-{{ malcolm_version }}-docker_install.zip
+malcolm_release_checksum: "sha256:b147ff5168b68edb17150a1b60b431d5ba722ae5e05986856c737745d889f435"
+malcolm_download_dir: /var/cache/malcolm-release
+
+# Container image registry. Point at a local mirror for air-gapped use; the
+# compose file's image references are rewritten when this differs.
+malcolm_image_registry_default: ghcr.io/idaholab/malcolm
+malcolm_image_registry: "{{ malcolm_image_registry_default }}"
+
+# --- Install -----------------------------------------------------------------
+# All of Malcolm's data paths are relative to this directory, so put it on the
+# data disk.
+malcolm_install_dir: /opt/malcolm
+malcolm_user: malcolm
+malcolm_group: malcolm
+# Service user home; kept outside the install tree so Ansible temp files
+# never land in Malcolm's directory.
+malcolm_home: /var/lib/malcolm
+
+# --- Sizing ------------------------------------------------------------------
+# Heaps scale with host RAM (see CLAUDE.md). Malcolm's own defaults (10g/3g)
+# are too large for a 16 GB host.
+malcolm_mem_mb: "{{ ansible_facts['memtotal_mb'] | int }}"
+malcolm_opensearch_heap: >-
+  {{ '6g' if malcolm_mem_mb | int < 20480 else
+     '10g' if malcolm_mem_mb | int < 28672 else
+     '12g' if malcolm_mem_mb | int < 49152 else
+     '24g' if malcolm_mem_mb | int < 98304 else '31g' }}
+malcolm_logstash_heap: >-
+  {{ '2g' if malcolm_mem_mb | int < 20480 else
+     '3g' if malcolm_mem_mb | int < 28672 else
+     '4g' if malcolm_mem_mb | int < 98304 else '6g' }}
+
+# Hosts under 24 GB can't carry Malcolm's default workload alongside
+# OpenSearch: limit Zeek live workers (0 = Malcolm's autocalc, CPUs - 4) and
+# turn off the Strelka/filescan pipeline (only useful with Zeek file
+# extraction enabled anyway).
+malcolm_small_host: "{{ malcolm_mem_mb | int < 24576 }}"
+malcolm_zeek_live_workers: "{{ 1 if malcolm_small_host | bool else 0 }}"
+malcolm_pipeline_enabled: "{{ not (malcolm_small_host | bool) }}"
+
+# --- Capture -----------------------------------------------------------------
+# Interface for live capture. Empty disables live capture (PCAP upload only).
+# With local OpenSearch, live capture = netsniff-ng writing rotated PCAP for
+# Arkime, plus Zeek and Suricata analysing the interface directly.
+malcolm_capture_interface: ""
+malcolm_node_name: "{{ inventory_hostname }}"
+
+# --- Authentication ------------------------------------------------------------
+# Basic auth admin. The password and Arkime secret belong in Ansible Vault.
+malcolm_admin_username: analyst
+# malcolm_admin_password: (required, from vault)
+# malcolm_arkime_secret: (required, from vault)
+# Set true to re-run auth setup (e.g. after changing the admin password).
+# Certificates and internal credentials are only generated when missing.
+malcolm_auth_force: false
+# Hide password-bearing task output. Set false only to debug auth setup.
+malcolm_no_log: true
+
+# --- Extra settings --------------------------------------------------------------
+# Additional config/*.env settings, merged over the role's own:
+#   malcolm_env_extra:
+#     zeek.env:
+#       ZEEK_EXTRACTOR_MODE: interesting
+malcolm_env_extra: {}
+
+# Seconds to wait for Malcolm's API to answer after start.
+malcolm_ready_timeout: 1200
+malcolm_apt_lock_timeout: 600

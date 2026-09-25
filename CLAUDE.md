@@ -71,10 +71,12 @@ malcolm-ansible/
 │       └── group_vars/
 │           ├── all.yml          # currently empty
 │           └── malcolm/
-│               └── vars.yml     # ansible_user, data device, capture NIC, docker users
+│               ├── vars.yml     # host, capture, malcolm settings; refs vault vars
+│               └── vault.yml    # ansible-vault encrypted secrets
 ├── roles/
 │   ├── malcolm_host_prep/
-│   └── docker_engine/
+│   ├── docker_engine/
+│   └── malcolm/
 └── playbooks/
     ├── bootstrap.yml            # run once per fresh target
     └── deploy_malcolm.yml       # applies the roles below
@@ -99,17 +101,38 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
   promiscuous, offloads off). Capture setup refuses to touch the default-route
   or management interface. Assumes NetworkManager (Desktop); Server/networkd
   hosts would need a netplan variant.
-- [ ] `malcolm` — pin a release version, stage it, template `config/*.env`,
-  bring the stack up with `docker compose`. Also needs a non-interactive
-  replacement for Malcolm's `auth_setup` step (admin htpasswd, TLS certs,
-  OpenSearch credential files), with credentials sourced from Vault. Make the
-  container image registry a variable for air-gapped use.
+- [x] `malcolm` — v26.08.0 pinned (`malcolm_version` + sha256 of the
+  `docker_install.zip` release asset). Unpacks the runtime tarball to
+  `malcolm_install_dir` (`/data/malcolm` in the lab, so every relative data
+  path lands on `sdb`), owned by a `malcolm` system user (home
+  `/var/lib/malcolm`, in the docker group; its UID/GID become PUID/PGID).
+  Creates `config/*.env` from the examples, then sets only the keys the role
+  owns via `lineinfile` (heaps, auth mode, node name, live-capture set, Zeek
+  workers, pipeline); extra keys via `malcolm_env_extra`. Pulls images only
+  when missing. Auth via `control.py --auth-noninteractive` only when certs /
+  htpasswd / OpenSearch creds are missing (or `malcolm_auth_force`). Starts via
+  `control.py --start --quiet` only when nothing is running; config changes
+  restart via handler. Waits for `/mapi/ping`. Refuses to overwrite a different
+  installed version (upgrades not automated yet). Image registry is a variable
+  for air-gapped mirrors.
 
 ## Malcolm-specific constraints
 
 - **Do not drive Malcolm's `install.py` / `configure` scripts interactively.**
-  They prompt. For idempotent automation, template Malcolm's `config/*.env`
-  files with Jinja2 and drive `docker compose` directly.
+  They prompt. The role sets `config/*.env` keys itself and uses only the
+  non-interactive modes of `scripts/control.py` (`--auth-noninteractive`,
+  `--start/--restart --quiet`). Plain `docker compose up` is **not** enough:
+  `start` also creates the OpenSearch keystore, bind-mount dirs, placeholder
+  auth files and fixes permissions, and refuses to run until auth files exist.
+- **Live capture with local OpenSearch** = netsniff-ng writes rotated PCAP for
+  Arkime (`ARKIME_LIVE_CAPTURE=false`, `ARKIME_ROTATED_PCAP=true`) while Zeek
+  and Suricata analyse the NIC live (`*_LIVE_CAPTURE=true`,
+  `*_ROTATED_PCAP=false`). Arkime's own live mode needs remote OpenSearch.
+  Mirrors `installer/utils/custom_transforms.py`.
+- **Small hosts (< 24 GB):** Malcolm's defaults (OpenSearch 10g, Logstash 3g,
+  Zeek live workers = CPUs − 4, Strelka pipeline on) drove `malcolm01` to load
+  29 and swap. The role sets 6g/2g, 1 Zeek worker and `PIPELINE_DISABLED=true`
+  there. Steady state is ~13 GB used, ~2 GB available.
 - **Pin the Malcolm release** in `group_vars`. Configuration options change
   between versions.
 - **Memory is the binding constraint.** Malcolm wants 16 GB minimum; the target
@@ -144,9 +167,12 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
 - Collection versions are pinned in `requirements.yml`; bump deliberately.
 - Tunables go in `roles/<role>/defaults/main.yml`; environment-specific values
   go in `inventories/lab/group_vars/`.
-- Secrets go in an Ansible Vault file under `group_vars/malcolm/vault.yml`.
-  None exist yet — create it with `ansible-vault create` when Malcolm's admin
-  credentials are needed. Do not commit a vault password file.
+- Secrets live in `inventories/lab/group_vars/malcolm/vault.yml` (encrypted,
+  committed): `vault_malcolm_admin_password`, `vault_malcolm_arkime_secret`,
+  referenced from `vars.yml`. The vault password file is
+  `~/.ansible/vault_pass.txt` (outside the repo, set in `ansible.cfg`); never
+  commit it. The current vault and admin passwords are temporary lab values
+  and are to be changed (`ansible-vault rekey`, then edit + `malcolm_auth_force`).
 - Run `ansible-lint` before committing.
 - Commit after each working role.
 
@@ -207,5 +233,13 @@ bootstrap can reach it. This is the only accepted manual step.
   `vmware.log` in the VM directory shows `MACVNetLinkStateEventHandler ... up:1`
   when the bridge link is really up. Don't use **Restore Defaults**: it can
   renumber VMnet1/VMnet8 and break management and NAT.
+- On ansible-core 2.19+, a var built with `{% for %}` blocks renders as a
+  **string**, not a list; use nested `include_tasks` loops or filters instead.
+- Malcolm's first boot pins all 8 vCPUs for ~5 min (API) to ~10 min
+  (Logstash healthy). `sudo` on the target can exceed Ansible's 10 s default,
+  so `ansible.cfg` sets `timeout = 30` and the readiness check runs without
+  become.
+- Malcolm API aggregation URL is `/mapi/agg?fields=event.provider&from=...`;
+  `/mapi/agg/<field>` redirects to plain HTTP and loses the field.
 - Windows interop (`powershell.exe`) is disabled in this WSL instance; Windows
   host state can only be inspected via files under `/mnt/c`.

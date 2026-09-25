@@ -1,0 +1,82 @@
+# Files Malcolm's start script requires before it will run
+# (MalcolmAuthFilesExist in scripts/malcolm_common.py).
+- name: Check authentication artifacts
+  ansible.builtin.stat:
+    path: "{{ malcolm_install_dir }}/{{ item }}"
+  loop:
+    - nginx/htpasswd
+    - nginx/certs/cert.pem
+    - nginx/certs/key.pem
+    - .opensearch.primary.curlrc
+  register: malcolm_auth_files
+
+- name: Decide whether auth setup is needed
+  ansible.builtin.set_fact:
+    malcolm_auth_needed: >-
+      {{ malcolm_auth_force | bool
+         or (malcolm_auth_files.results | rejectattr('stat.exists') | list | length > 0)
+         or (malcolm_auth_files.results | selectattr('stat.exists') | selectattr('stat.size', 'eq', 0) | list | length > 0) }}
+
+- name: Run authentication setup
+  when: malcolm_auth_needed | bool
+  block:
+    - name: Assert vaulted credentials are defined
+      ansible.builtin.assert:
+        that:
+          - malcolm_admin_password is defined
+          - malcolm_admin_password | length >= 8
+          - malcolm_arkime_secret is defined
+          - malcolm_arkime_secret | length > 0
+        fail_msg: >-
+          malcolm_admin_password (8+ chars) and malcolm_arkime_secret must be set,
+          normally from group_vars/malcolm/vault.yml.
+        quiet: true
+
+    - name: Hash admin password (SHA-512 crypt)
+      ansible.builtin.command:
+        cmd: openssl passwd -6 -stdin
+        stdin: "{{ malcolm_admin_password }}"
+      register: malcolm_pw_openssl
+      changed_when: false
+      no_log: "{{ malcolm_no_log }}"
+
+    - name: Hash admin password (bcrypt)
+      ansible.builtin.command:
+        cmd: htpasswd -niB {{ malcolm_admin_username }}
+        stdin: "{{ malcolm_admin_password }}"
+      register: malcolm_pw_htpasswd
+      changed_when: false
+      no_log: "{{ malcolm_no_log }}"
+
+    - name: Configure authentication non-interactively
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ malcolm_install_dir }}/scripts/control.py"
+          - --auth-noninteractive
+          - "true"
+          - --auth-method
+          - basic
+          - --auth-admin-username
+          - "{{ malcolm_admin_username }}"
+          - --auth-admin-password-openssl
+          - "{{ malcolm_pw_openssl.stdout | trim }}"
+          - --auth-admin-password-htpasswd
+          - "{{ (malcolm_pw_htpasswd.stdout | trim).split(':', 1)[1] }}"
+          - --auth-arkime-password
+          - "{{ malcolm_arkime_secret }}"
+          - --auth-generate-webcerts
+          - "{{ (not malcolm_auth_files.results[2].stat.exists) | string | lower }}"
+          - --auth-generate-fwcerts
+          - "{{ (not malcolm_auth_files.results[2].stat.exists) | string | lower }}"
+          - --auth-generate-opensearch-internal-creds
+          - "{{ ((malcolm_auth_files.results[3].stat.size | default(0)) == 0) | string | lower }}"
+          - --auth-generate-postgres-password
+          - "{{ ((malcolm_auth_files.results[3].stat.size | default(0)) == 0) | string | lower }}"
+          - --auth-generate-valkey-password
+          - "{{ ((malcolm_auth_files.results[3].stat.size | default(0)) == 0) | string | lower }}"
+        chdir: "{{ malcolm_install_dir }}"
+      become: true
+      become_user: "{{ malcolm_user }}"
+      changed_when: true
+      no_log: "{{ malcolm_no_log }}"
