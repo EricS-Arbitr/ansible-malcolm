@@ -110,9 +110,10 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
   owns via `lineinfile` (heaps, auth mode, node name, live-capture set, Zeek
   workers, pipeline); extra keys via `malcolm_env_extra`. Pulls images only
   when missing. Auth via `control.py --auth-noninteractive` only when certs /
-  htpasswd / OpenSearch creds are missing (or `malcolm_auth_force`). Starts via
-  `control.py --start --quiet` only when nothing is running; config changes
-  restart via handler. Waits for `/mapi/ping`. Refuses to overwrite a different
+  htpasswd / OpenSearch creds are missing (or `malcolm_auth_force`). Runs
+  Malcolm as `malcolm.service` (systemd oneshot wrapping `control.py
+  --start/--stop --quiet`, after docker and the `/data` mount), enabled at
+  boot; config changes restart it via handler only if it was already active. Waits for `/mapi/ping`. Refuses to overwrite a different
   installed version (upgrades not automated yet). Image registry is a variable
   for air-gapped mirrors.
 
@@ -129,6 +130,14 @@ Collections in `requirements.yml`: `community.docker`, `community.general`,
   and Suricata analyse the NIC live (`*_LIVE_CAPTURE=true`,
   `*_ROTATED_PCAP=false`). Arkime's own live mode needs remote OpenSearch.
   Mirrors `installer/utils/custom_transforms.py`.
+- **Malcolm does not survive a reboot on its own:** every compose service has
+  `restart: "no"`. `malcolm.service` starts it at boot and stops it gracefully
+  at shutdown (~80 s; OpenSearch has a 3 min grace period, Docker's own stop
+  would kill it after 10 s). Verified by reboot on 2026-09-24.
+- **Indexing lags capture:** live PCAP rotates every 10 min
+  (`PCAP_ROTATE_MINUTES`) before Arkime indexes it, and Zeek/Suricata logs are
+  picked up in batches. Expect ~10 min after start before new events appear;
+  an empty result shortly after a restart is not a failure.
 - **Small hosts (< 24 GB):** Malcolm's defaults (OpenSearch 10g, Logstash 3g,
   Zeek live workers = CPUs − 4, Strelka pipeline on) drove `malcolm01` to load
   29 and swap. The role sets 6g/2g, 1 Zeek worker and `PIPELINE_DISABLED=true`

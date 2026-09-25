@@ -69,6 +69,11 @@ malcolm_no_log: true
 #       ZEEK_EXTRACTOR_MODE: interesting
 malcolm_env_extra: {}
 
+# systemd limits for malcolm.service. Stop allows OpenSearch's 3-minute
+# grace period plus the rest of the stack.
+malcolm_service_start_timeout: 900
+malcolm_service_stop_timeout: 600
+
 # Seconds to wait for Malcolm's API to answer after start.
 malcolm_ready_timeout: 1200
 malcolm_apt_lock_timeout: 600

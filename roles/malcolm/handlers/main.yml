@@ -1,12 +1,7 @@
 - name: Restart Malcolm
-  ansible.builtin.command:
-    cmd: python3 {{ malcolm_install_dir }}/scripts/control.py --restart --quiet
-    chdir: "{{ malcolm_install_dir }}"
-  become: true
-  become_user: "{{ malcolm_user }}"
-  changed_when: true
+  ansible.builtin.systemd_service:
+    name: malcolm
+    state: restarted
+    daemon_reload: true
   # Only restart a stack that was already up before this run's changes.
-  when:
-    - malcolm_running is defined
-    - malcolm_running.stdout_lines | default([]) | length > 0
-    - not (malcolm_started_this_run | default(false) | bool)
+  when: malcolm_was_active | default(false) | bool

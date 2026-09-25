@@ -1,26 +1,30 @@
-- name: Check for running Malcolm containers
-  ansible.builtin.command:
-    cmd: "{{ malcolm_compose }} ps --quiet --status running"
-    chdir: "{{ malcolm_install_dir }}"
-  register: malcolm_running
-  changed_when: false
+- name: Check whether the Malcolm service is already active
+  ansible.builtin.systemd_service:
+    name: malcolm
+  register: malcolm_service_state
+  failed_when: false
 
-# scripts/start does more than "compose up": it creates the OpenSearch
-# keystore, bind-mount directories and placeholder files, and fixes
-# permissions. --quiet returns once compose has started the containers.
-- name: Start Malcolm
-  ansible.builtin.command:
-    cmd: python3 {{ malcolm_install_dir }}/scripts/control.py --start --quiet
-    chdir: "{{ malcolm_install_dir }}"
-  become: true
-  become_user: "{{ malcolm_user }}"
-  when: malcolm_running.stdout_lines | length == 0
-  changed_when: true
-  register: malcolm_started
+- name: Install Malcolm systemd unit
+  ansible.builtin.template:
+    src: malcolm.service.j2
+    dest: /etc/systemd/system/malcolm.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Malcolm
 
-- name: Skip restart handler after a fresh start
+- name: Enable and start Malcolm
+  ansible.builtin.systemd_service:
+    name: malcolm
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# The handler restarts only a stack that was already running before this run;
+# a stack started just now already has the current config.
+- name: Record whether Malcolm was running before this run
   ansible.builtin.set_fact:
-    malcolm_started_this_run: "{{ malcolm_started is changed }}"
+    malcolm_was_active: "{{ (malcolm_service_state.status | default({})).get('ActiveState', '') == 'active' }}"
 
 - name: Apply pending config changes before health check
   ansible.builtin.meta: flush_handlers

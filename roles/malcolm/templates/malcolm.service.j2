@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+# Malcolm's compose services use restart: "no", so nothing brings them back
+# after a reboot. This unit runs Malcolm's own start/stop, which also prepare
+# the keystore, bind-mount dirs and permissions, and stops the stack
+# gracefully before Docker shuts down.
+[Unit]
+Description=Malcolm network traffic analysis stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor={{ malcolm_install_dir }}
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User={{ malcolm_user }}
+Group={{ malcolm_group }}
+WorkingDirectory={{ malcolm_install_dir }}
+ExecStart=/usr/bin/python3 {{ malcolm_install_dir }}/scripts/control.py --start --quiet
+ExecStop=/usr/bin/python3 {{ malcolm_install_dir }}/scripts/control.py --stop --quiet
+TimeoutStartSec={{ malcolm_service_start_timeout }}
+TimeoutStopSec={{ malcolm_service_stop_timeout }}
+
+[Install]
+WantedBy=multi-user.target
